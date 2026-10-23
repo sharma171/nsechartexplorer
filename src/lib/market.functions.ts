@@ -21,21 +21,47 @@ const yahooSymbol = (symbol: string, exchange: string) => {
   return `${s}.${exchange === "BSE" ? "BO" : "NS"}`;
 };
 
+const YAHOO_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  Accept: "application/json",
+};
+
+async function fetchYahooJson(path: string): Promise<{ ok: boolean; status: number; json: any }> {
+  const hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
+  let lastStatus = 500;
+  for (const host of hosts) {
+    try {
+      const res = await fetch(`https://${host}${path}`, { headers: YAHOO_HEADERS });
+      lastStatus = res.status;
+      if (res.ok) {
+        const json = await res.json();
+        return { ok: true, status: res.status, json };
+      }
+      if (res.status === 404) {
+        return { ok: false, status: 404, json: null };
+      }
+    } catch {
+      // try next host mirror
+    }
+  }
+  return { ok: false, status: lastStatus, json: null };
+}
+
 async function fetchOne(symbol: string, exchange: string, timeframe: "weekly" | "monthly"): Promise<SymbolData> {
   const interval = timeframe === "weekly" ? "1wk" : "1mo";
   const range = timeframe === "weekly" ? "3y" : "10y";
   const yahoo = encodeURIComponent(yahooSymbol(symbol, exchange));
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahoo}?interval=${interval}&range=${range}`;
+  const chartPath = `/v8/finance/chart/${yahoo}?interval=${interval}&range=${range}`;
+  const dailyPath = `/v8/finance/chart/${yahoo}?interval=1d&range=1mo`;
   try {
-    const headers = { "User-Agent": "Mozilla/5.0", Accept: "application/json" };
-    const [res, dailyRes] = await Promise.all([
-      fetch(url, { headers }),
-      fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${yahoo}?interval=1d&range=1mo`, { headers }).catch(() => null),
+    const [chartResult, dailyResult] = await Promise.all([
+      fetchYahooJson(chartPath),
+      fetchYahooJson(dailyPath).catch(() => ({ ok: false, status: 500, json: null })),
     ]);
-    const json = res.ok ? (await res.json()) as any : null;
+    const json = chartResult.json;
     const r = json?.chart?.result?.[0];
-    const dailyJson = dailyRes?.ok ? (await dailyRes.json()) as any : null;
-    const daily = dailyJson?.chart?.result?.[0];
+    const daily = dailyResult.json?.chart?.result?.[0];
     const dailyCloses = daily?.indicators?.quote?.[0]?.close as (number | null)[] | undefined;
     const dailyTimestamps = daily?.timestamp as number[] | undefined;
     let latestDailyIndex = -1;
@@ -50,7 +76,7 @@ async function fetchOne(symbol: string, exchange: string, timeframe: "weekly" | 
     }
     const latestClose = latestDailyIndex >= 0 ? dailyCloses?.[latestDailyIndex] ?? null : null;
     const latestCloseAt = latestDailyIndex >= 0 ? dailyTimestamps?.[latestDailyIndex] ?? null : null;
-    if (!res.ok) return { symbol, exchange, bars: [], error: res.status === 404 ? "Symbol not found" : `Data source error (${res.status})`, latestClose, latestCloseAt, fiftyTwoWeekHigh: null, fiftyTwoWeekLow: null };
+    if (!chartResult.ok) return { symbol, exchange, bars: [], error: chartResult.status === 404 ? "Symbol not found" : `Data source error (${chartResult.status})`, latestClose, latestCloseAt, fiftyTwoWeekHigh: null, fiftyTwoWeekLow: null };
     if (!r?.timestamp) return { symbol, exchange, bars: [], error: json?.chart?.error?.description ?? "No data returned", latestClose, latestCloseAt, fiftyTwoWeekHigh: null, fiftyTwoWeekLow: null };
     const fiftyTwoWeekHigh = typeof r.meta?.fiftyTwoWeekHigh === "number" ? r.meta.fiftyTwoWeekHigh : null;
     const fiftyTwoWeekLow = typeof r.meta?.fiftyTwoWeekLow === "number" ? r.meta.fiftyTwoWeekLow : null;
@@ -98,10 +124,9 @@ export const searchSymbols = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ q: z.string().min(1).max(40) }).parse(d))
   .handler(async ({ data }) => {
     try {
-      const res = await fetch(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(data.q)}&quotesCount=20&newsCount=0&enableFuzzyQuery=true&region=IN&lang=en-IN`, {
-        headers: { "User-Agent": "Mozilla/5.0" },
-      });
-      const json = (await res.json()) as any;
+      const searchPath = `/v1/finance/search?q=${encodeURIComponent(data.q)}&quotesCount=20&newsCount=0&enableFuzzyQuery=true&region=IN&lang=en-IN`;
+      const res = await fetchYahooJson(searchPath);
+      const json = res.json ?? {};
       return ((json.quotes ?? []) as any[])
         .filter((q) => typeof q.symbol === "string" && (q.quoteType === "EQUITY" || q.quoteType === "ETF") && (q.symbol.endsWith(".NS") || q.symbol.endsWith(".BO")))
         .map((q) => ({
@@ -152,11 +177,11 @@ export async function fetchIntervalBars(
     qRange = "max";
   }
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahoo}?interval=${qInterval}&range=${qRange}`;
+  const chartPath = `/v8/finance/chart/${yahoo}?interval=${qInterval}&range=${qRange}`;
   try {
-    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" } });
+    const res = await fetchYahooJson(chartPath);
     if (!res.ok) return { bars: [], error: `Data source error (${res.status})` };
-    const json = (await res.json()) as any;
+    const json = res.json ?? {};
     const r = json?.chart?.result?.[0];
     if (!r?.timestamp) return { bars: [], error: json?.chart?.error?.description ?? "No data returned" };
     const q = r.indicators.quote[0];

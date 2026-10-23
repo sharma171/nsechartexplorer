@@ -30,7 +30,12 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 }
 
 function createSupabaseAdminClient() {
-  const SUPABASE_URL = process.env['SUPABASE_URL'];
+  const SUPABASE_URL =
+    process.env['SUPABASE_URL'] ||
+    process.env.SUPABASE_URL ||
+    process.env['VITE_SUPABASE_URL'] ||
+    process.env.VITE_SUPABASE_URL ||
+    'https://c--2d8e0950-a751-4d00-b8ca-586de6eb0cc4-prod.lovable.cloud';
   const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'];
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {

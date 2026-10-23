@@ -122,15 +122,21 @@ function BoardView({ board }: { board: Board }) {
     enabled: activeCos.length > 0,
     staleTime: Infinity,
     queryFn: async () => {
-      const res = await getOhlc({ data: { timeframe, items: activeCos.map((c) => ({ symbol: c.symbol, exchange: c.exchange })) } });
-      const failed = res.filter((r) => r.error);
-      const rows = res.map((r) => ({ board_id: board.id, symbol: r.symbol, status: r.error ? "failed" : "ok", message: r.error ?? `${r.bars.length} ${timeframe} bars` }));
-      await supabase.from("refresh_log").insert(rows);
-      await supabase.from("boards").update({ last_refreshed: new Date().toISOString() }).eq("id", board.id);
-      qc.invalidateQueries({ queryKey: ["boards"] });
-      qc.invalidateQueries({ queryKey: ["log", board.id] });
-      if (failed.length) toast.warning(`${failed.length} symbol(s) failed — see Error Log`);
-      return Object.fromEntries(res.map((r) => [`${r.exchange}:${r.symbol}`, r])) as Record<string, SymbolData>;
+      try {
+        const res = await getOhlc({ data: { timeframe, items: activeCos.map((c) => ({ symbol: c.symbol, exchange: c.exchange })) } });
+        const failed = res.filter((r) => r.error);
+        const rows = res.map((r) => ({ board_id: board.id, symbol: r.symbol, status: r.error ? "failed" : "ok", message: r.error ?? `${r.bars.length} ${timeframe} bars` }));
+        await supabase.from("refresh_log").insert(rows);
+        await supabase.from("boards").update({ last_refreshed: new Date().toISOString() }).eq("id", board.id);
+        qc.invalidateQueries({ queryKey: ["boards"] });
+        qc.invalidateQueries({ queryKey: ["log", board.id] });
+        if (failed.length) toast.warning(`${failed.length} symbol(s) failed — see Error Log`);
+        return Object.fromEntries(res.map((r) => [`${r.exchange}:${r.symbol}`, r])) as Record<string, SymbolData>;
+      } catch (err: any) {
+        console.error("Market data refresh error:", err);
+        toast.error(`Market refresh failed: ${err?.message || "Server connection error"}`);
+        throw err;
+      }
     },
   });
 

@@ -1,0 +1,1 @@
+ALTER TABLE public.companies ADD COLUMN average_buy_price numeric;
